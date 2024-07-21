@@ -1,0 +1,311 @@
+#include <X11/X.h>
+#include <X11/Xlib.h>
+#include <X11/cursorfont.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <unistd.h>
+#include "util.h"
+
+typedef struct Client Client;
+struct Client {
+	Window wnd;
+	Client *next;
+	Client *prev;
+};
+
+Display *dpy;
+Window root;
+Cursor cursor;
+
+Client *clients = NULL;
+Client *focused = NULL;
+int num_clients = 0;
+
+int root_w;
+int root_h;
+
+void add_client(Window wnd) {
+	Client *new_client = malloc(sizeof(Client));
+	if (new_client == NULL) {
+		panic("Could not allocate memory for new client...");
+	}
+
+	new_client->wnd = wnd;
+	new_client->next = NULL;
+
+	if (clients == NULL) {
+		new_client->prev = NULL;
+		clients = new_client;
+		num_clients = 1;
+	} else {
+		Client *cc = clients;
+		while (cc->next != NULL) {
+			cc = cc->next;
+		}
+		cc->next = new_client;
+		new_client->prev = cc;
+		num_clients += 1;
+	}
+
+	focused = new_client;
+	printf("added client, num_clients: %d\n", num_clients);
+}
+
+void remove_client(Window wnd) {
+	Client *cc = clients;
+
+	while (cc != NULL && cc->wnd != wnd) {
+		cc = cc->next;
+	}
+
+	if (cc == NULL) {
+		printf("client with window id %lu not found\n", wnd);
+		return;
+	}
+
+	if (cc->prev != NULL) {
+		cc->prev->next = cc->next;
+		cc->next->prev = cc->prev;
+	} else {
+		clients = cc->next;
+	}
+
+	num_clients -= 1;
+
+	if (num_clients > 0) {
+		if (cc->prev != NULL) {
+			focused = cc->prev;
+		} else if (cc->next != NULL) {
+			focused = cc->next;
+		}
+	} else {
+		focused = NULL;
+	}
+
+	free(cc);
+	printf("removed client, num_clients: %d\n", num_clients);
+}
+
+void spawn(const char *cmd) {
+    if (fork() == 0) {
+        if (dpy) {
+            close(ConnectionNumber(dpy));
+        }
+        setsid();
+        setenv("DISPLAY", getenv("DISPLAY"), 1);
+        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        fprintf(stderr, "execl failed: %s\n", cmd);
+        exit(EXIT_FAILURE);
+    }
+}
+
+void handle_create_notify(XEvent e) {
+	printf("A window has been created :%lu\nParent is: %lu\nOverride redirect set to: %d\n\n", e.xcreatewindow.window, e.xcreatewindow.parent, e.xcreatewindow.override_redirect);
+}
+
+void handle_destroy_notify(XEvent e) {
+	printf("A window has been destroyed :%lu\n\n", e.xdestroywindow.window);
+}
+
+void handle_map_request(XEvent e) {
+	// proceed to map it as it wishes
+	printf("A window: %lu has requested map\nParent is: %lu\n\n", e.xmaprequest.window, e.xmaprequest.parent);
+	XMapWindow(dpy, e.xmaprequest.window);
+
+	// add the client to the list
+	add_client(e.xmaprequest.window);
+	// client is focused after adding...
+	if (focused != NULL) {
+		printf("Focusing %lu\n", focused->wnd);
+		XSetInputFocus(dpy, focused->wnd, RevertToParent, CurrentTime);
+		XRaiseWindow(dpy, focused->wnd);
+	}
+}
+
+void handle_map_notify(XEvent e) {
+	printf("A window: %lu has been mapped\nOverride redirect is: %d\n\n", e.xmap.window, e.xmap.override_redirect);
+}
+
+void handle_unmap_notify(XEvent e) {
+	printf("A window: %lu has been unmapped\nFrom configure is: %d\n\n", e.xunmap.window, e.xunmap.from_configure);
+	remove_client(e.xunmap.window);
+	if (num_clients > 0) {
+		printf("Focusing %lu\n", focused->wnd);
+		XSetInputFocus(dpy, focused->wnd, RevertToParent, CurrentTime);
+		XRaiseWindow(dpy, focused->wnd);
+	}
+}
+
+void handle_configure_request(XEvent e) {
+	printf("A window: %lu has requested configure\nParent is: %lu\nWindow is above: %lu\n\n", e.xconfigurerequest.window, e.xconfigurerequest.parent, e.xconfigurerequest.above);
+
+	XWindowChanges changes;
+	changes.x = e.xconfigurerequest.x;
+	changes.y = e.xconfigurerequest.y;
+	changes.width = root_w;
+	changes.height = root_h;
+	changes.stack_mode = e.xconfigurerequest.detail;
+
+	XConfigureWindow(dpy, e.xconfigurerequest.window, CWX|CWY|CWWidth|CWHeight|CWStackMode, &changes);
+}
+
+void handle_configure_notify(XEvent e) {
+	printf("A window has been configured: %lu\nOverride redirect is: %d\nWindow is above: %lu\n\n", e.xconfigure.window, e.xconfigure.override_redirect, e.xconfigure.above);
+}
+
+int get_window_width(Window wnd) {
+	XWindowAttributes attrs;
+	XGetWindowAttributes(dpy, wnd, &attrs);
+	return attrs.width;
+}
+
+int get_window_height(Window wnd) {
+	XWindowAttributes attrs;
+	XGetWindowAttributes(dpy, wnd, &attrs);
+	return attrs.height;
+}
+
+int main(void) {
+	dpy = XOpenDisplay(NULL);
+	if (dpy == NULL) {
+		panic("Could not open display...");
+	}
+	root = DefaultRootWindow(dpy);
+
+	printf("Root has id: %lu\n", root);
+
+	// fetch some info
+	root_w = get_window_width(root);
+	root_h = get_window_height(root);
+	printf("Display width: %d\n", root_w);
+	printf("Display height: %d\n", root_h);
+
+	// now we register for SubstructureRedirect and SubstructureNotify events
+	int err = XSelectInput(dpy, root, SubstructureRedirectMask | SubstructureNotifyMask);
+	if (err == BadWindow) {
+		panic("Bad window...");
+	}
+	// sync the changes...
+	XSync(dpy, false);
+
+	// mouse and keyboard stuff...
+	//
+	// create the cursor
+	cursor = XCreateFontCursor(dpy, XC_X_cursor);
+	// define the cursor
+	XDefineCursor(dpy, root, cursor);
+	// sync the changes
+	XSync(dpy, false);
+	//
+	// register for mouse events...
+	// XGrabButton(dpy, AnyButton, None, root, false, ButtonPressMask, GrabModeAsync, GrabModeAsync, None, cursor);
+	// sync the changes
+	// XSync(dpy, false);
+	//
+	// register for key events...
+	// XGrabKey(dpy, AnyKey, None, root, false, GrabModeSync, GrabModeAsync);
+	// sync the changes
+	// XSync(dpy, false);
+	//
+	KeyCode key_return = XKeysymToKeycode(dpy, XStringToKeysym("Return"));
+	XGrabKey(dpy, key_return, Mod4Mask, root, false, GrabModeAsync, GrabModeAsync);
+	KeyCode key_k = XKeysymToKeycode(dpy, XStringToKeysym("k"));
+	XGrabKey(dpy, key_k, Mod4Mask, root, false, GrabModeAsync, GrabModeAsync);
+	KeyCode key_l = XKeysymToKeycode(dpy, XStringToKeysym("l"));
+	XGrabKey(dpy, key_l, Mod4Mask, root, false, GrabModeAsync, GrabModeAsync);
+	KeyCode key_q = XKeysymToKeycode(dpy, XStringToKeysym("q"));
+	XGrabKey(dpy, key_q, Mod4Mask, root, false, GrabModeAsync, GrabModeAsync);
+
+	// The event we are handling...
+	XEvent e;
+	// main loop
+	for (;;) {
+		XNextEvent(dpy, &e);
+		switch (e.type) {
+			case CreateNotify:
+				handle_create_notify(e);
+				break;
+
+			case DestroyNotify:
+				handle_destroy_notify(e);
+				break;
+
+			case MapRequest:
+				handle_map_request(e);
+				break;
+
+			case MapNotify:
+				handle_map_notify(e);
+				break;
+
+			case UnmapNotify:
+				handle_unmap_notify(e);
+				break;
+
+			case ConfigureRequest:
+				handle_configure_request(e);
+				break;
+
+			case ConfigureNotify:
+				handle_configure_notify(e);
+				break;
+
+			case ButtonPress:
+				printf("Pressed mouse button %d\n", e.xbutton.button);
+				XAllowEvents(dpy, ReplayPointer, CurrentTime);
+				break;
+
+			case KeyPress:
+				printf("Pressed key %d\n", e.xkey.keycode);
+
+				// WTF JUST DIES QUIETLY AFTER I CLOSE A WINDOW???
+				if (e.xkey.keycode == key_q && e.xkey.state == Mod4Mask) {
+					if (focused != NULL) {
+						printf("Killing %lu\n", focused->wnd);
+						XDestroyWindow(dpy, focused->wnd);
+						XSync(dpy, false);
+					}
+				}
+
+				if (e.xkey.keycode == key_return && e.xkey.state == Mod4Mask) {
+					spawn("alacritty");
+				}
+
+				if (e.xkey.keycode == key_k && e.xkey.state == Mod4Mask) {
+					if (focused->prev != NULL && focused != NULL) {
+						focused = focused->prev;
+						printf("Focusing %lu\n", focused->wnd);
+						XSetInputFocus(dpy, focused->wnd, RevertToParent, CurrentTime);
+						XRaiseWindow(dpy, focused->wnd);
+					}
+				}
+
+				if (e.xkey.keycode == key_l && e.xkey.state == Mod4Mask) {
+					if (focused->next != NULL && focused != NULL) {
+						focused = focused->next;
+						printf("Focusing %lu\n", focused->wnd);
+						XSetInputFocus(dpy, focused->wnd, RevertToParent, CurrentTime);
+						XRaiseWindow(dpy, focused->wnd);
+					}
+				}
+
+				XAllowEvents(dpy, ReplayKeyboard, CurrentTime);
+				break;
+
+			case KeyRelease:
+				printf("Released key %d\n", e.xkey.keycode);
+				XAllowEvents(dpy, ReplayKeyboard, CurrentTime);
+				break;
+
+			default:
+				printf("Unhandled event... %d\n", e.type);
+				break;
+		}
+		// sync the changes...
+		XSync(dpy, false);
+	}
+
+	XCloseDisplay(dpy);
+	return EXIT_SUCCESS;
+}
