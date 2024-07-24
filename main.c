@@ -5,6 +5,7 @@
 #include <X11/Xft/Xft.h>
 #include <X11/cursorfont.h>
 #include <fontconfig/fontconfig.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,26 +21,37 @@ struct Client {
 };
 
 // function declarations
-void configurerequest(XEvent * e);
-void configurenotify(XEvent * e);
-void destroynotify(XEvent * e);
-void maprequest(XEvent * e);
-void mapnotify(XEvent * e);
-void unmapnotify(XEvent * e);
-void keypress(XEvent * e);
-void expose(XEvent * e);
+void configurerequest(XEvent *e);
+void configurenotify(XEvent *e);
+void destroynotify(XEvent *e);
+void maprequest(XEvent *e);
+void mapnotify(XEvent *e);
+void unmapnotify(XEvent *e);
+void keypress(XEvent *e);
+void expose(XEvent *e);
+void propertynotify(XEvent *e);
 void focus(Client *c);
 void unfocus(Client *c);
 void manage(Window w);
 void unmanage(Window w);
+void updatetitle(Client *c);
 void spawn(const char *a);
 void init();
 void createbar();
 void updatebar();
 void drawbar();
+void scan();
+void quit(Bool arg);
+void sighup();
+void sigterm();
+Client *wintoclient(Window wnd);
 
+// global variables
+Bool running = True;
+Bool restart = False;
 const int border_width = 0;
-const int bar_height = 32;
+const int bar_height = 40;
+const int bar_border_width = 2;
 const int bar_padding = 10;
 Display *dpy;
 Window root;
@@ -67,6 +79,7 @@ void (*handler[LASTEvent]) (XEvent *) = {
 	[UnmapNotify] = unmapnotify,
 	[KeyPress] = keypress,
 	[Expose] = expose,
+	[PropertyNotify] = propertynotify,
 };
 Cursor cursor;
 Client *clients = NULL;
@@ -134,6 +147,8 @@ void updatebar() {
 
 	int width = 0;
 	for (Client *c = clients; c != NULL; c = c->next) {
+		// updatetitle(c);
+	
 		printf("Drawing %lu\n", c->wnd);
 		XGlyphInfo extents;
 		XftTextExtents8(dpy, font, (const FcChar8*)c->name, strlen(c->name), &extents);
@@ -142,6 +157,8 @@ void updatebar() {
 			XftDrawRect(draw, &primary_color, width, 0, extents.width+2*bar_padding, bar_height);
 			XftDrawString8(draw, &bg_color, font, width+bar_padding, bar_height - 8, (const FcChar8*)c->name, strlen(c->name));
 		} else {
+			XftDrawRect(draw, &primary_color, width, 0, extents.width+2*bar_padding, bar_height);
+			XftDrawRect(draw, &bg_color, width+bar_border_width, bar_border_width, extents.width+2*bar_padding-2*bar_border_width, bar_height-2*bar_border_width);
 			XftDrawString8(draw, &fg_color, font, width+bar_padding, bar_height - 8, (const FcChar8*)c->name, strlen(c->name));
 		}
 		width += extents.width + bar_padding*2;
@@ -203,13 +220,17 @@ void keypress(XEvent * e) {
 		spawn("dmenu_run");
 	}
 
+	if (ev->keycode == XKeysymToKeycode(dpy, XK_r) && ev->state == (Mod4Mask|ControlMask)) {
+		quit(True);
+	}
+
+	if (ev->keycode == XKeysymToKeycode(dpy, XK_q) && ev->state == (Mod4Mask|ControlMask|ShiftMask)) {
+		quit(False);
+	}
+
 	if (ev->keycode == XKeysymToKeycode(dpy, XK_q) && ev->state == Mod4Mask) {
 		if (focused != NULL) {
 			XDestroyWindow(dpy, focused->wnd);
-
-			// unmanage(focused->wnd);
-			// leads to double free, gotta think if we want to do it like this
-			// ie have some additional behavior...
 		}
 	}
 
@@ -224,6 +245,54 @@ void keypress(XEvent * e) {
 			focus(focused->next);
 		}
 	}
+
+	if (ev->keycode == XKeysymToKeycode(dpy, XK_k) && ev->state == (Mod4Mask|ShiftMask)) {
+		if (focused != NULL) {
+			if (focused->prev != NULL) {
+				// Client *focused = focused;
+				Client *other = focused->prev;
+
+				Client *left = focused->prev->prev;
+				Client *right = focused->next;
+
+				if (left != NULL) left->next = focused;
+				focused->prev = left;
+				if (right != NULL) right->prev = other;
+				other->next = right;
+
+				focused->next = other;
+				other->prev = focused;
+
+				if (other == clients) clients = focused;
+
+				updatebar();
+			}
+		}
+	}
+
+	if (ev->keycode == XKeysymToKeycode(dpy, XK_l) && ev->state == (Mod4Mask|ShiftMask)) {
+		if (focused != NULL) {
+			if (focused->next != NULL) {
+				// Client *focused = focused;
+				Client *other = focused->next;
+
+				Client *left = focused->prev;
+				Client *right = other->next;
+
+				if (right != NULL) right->prev = focused;
+				focused->next = right;
+				if (left != NULL) left->next = other;
+				other->prev = left;
+
+				focused->prev = other;
+				other->next = focused;
+
+				if (focused == clients) clients = other;
+
+				updatebar();
+			}
+		}
+	}
 }
 
 void expose(XEvent * e) {
@@ -234,6 +303,27 @@ void expose(XEvent * e) {
 		updatebar();
 	}
 }
+
+void propertynotify(XEvent *e) {
+
+	if (e->xproperty.atom == XA_WM_NAME) {
+		Client *c = wintoclient(e->xproperty.window);
+		if (c != NULL) {
+			updatetitle(c);
+			updatebar();
+		}
+	}
+}
+
+void updatetitle(Client *c) {
+	XTextProperty name;
+	XGetTextProperty(dpy, c->wnd, &name, XA_WM_NAME);
+
+	if (name.encoding == XA_STRING) {
+		strncpy(c->name,(char *)name.value, sizeof(c->name));
+	}
+}
+
 
 void focus(Client *c) {
 	if (c == NULL) {
@@ -266,16 +356,15 @@ Client *wintoclient(Window wnd) {
 	return cc;
 }
 
+// register a window with the window manager
 void manage(Window wnd) {
 	Client *c = malloc(sizeof(Client));
 	c->wnd = wnd;
 
-	XTextProperty name;
-	XGetTextProperty(dpy, c->wnd, &name, XA_WM_NAME);
+	XSelectInput(dpy, c->wnd, PropertyChangeMask);
+	XSync(dpy, False);
 
-	if (name.encoding == XA_STRING) {
-		strncpy(c->name,(char *)name.value, sizeof(c->name));
-	}
+	updatetitle(c);
 
 	if (clients == NULL) {
 		c->next = NULL;
@@ -293,6 +382,16 @@ void manage(Window wnd) {
 
 	focus(c);
 	printf("Managing %lu:%s\n", c->wnd, c->name);
+
+	XWindowChanges changes;
+	changes.x = 0;
+	changes.y = bar_height;
+	changes.width = root_width;
+	changes.height = root_height - bar_height;
+	changes.border_width = border_width;
+	changes.stack_mode = Above;
+
+	XConfigureWindow(dpy, c->wnd, CWX|CWY|CWWidth|CWHeight|CWBorderWidth|CWStackMode, &changes);
 
 	printf("updating from manage\n");
 	updatebar();
@@ -350,12 +449,56 @@ void unmanage(Window wnd) {
 void grabkeys() {
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_Return), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_space), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
+	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_r), Mod4Mask|ControlMask, root, True, GrabModeAsync, GrabModeAsync);
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_q), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
+	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_q), Mod4Mask|ControlMask|ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_k), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_l), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
+	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_k), Mod4Mask|ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_l), Mod4Mask|ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+}
+
+void scan(void) {
+	unsigned int num;
+	Window d1, d2, *children = NULL;
+	XWindowAttributes wa;
+
+	if (XQueryTree(dpy, root, &d1, &d2, &children, &num)) {
+		for (int i = 0; i < num; i++) {
+			if (!XGetWindowAttributes(dpy, children[i], &wa) || wa.override_redirect) {
+				continue;
+			}
+
+			if (wa.map_state != IsUnmapped) {
+				manage(children[i]);
+			}
+		}
+		if (children) {
+			XFree(children);
+		}
+	}
+}
+
+void quit(Bool arg) {
+	if (arg) {
+		restart = True;
+	}
+	running = False;
+}
+
+void sighup() {
+	quit(True);
+}
+
+void sigterm() {
+	quit(False);
 }
 
 void setup() {
+	signal(SIGHUP, sighup);
+	signal(SIGTERM, sigterm);
+
 	dpy = XOpenDisplay(NULL);
 	if (dpy == NULL) {
 		panic("Could not open display...");
@@ -383,7 +526,7 @@ void setup() {
 void run() {
 	XEvent ev;
 	XSync(dpy, False);
-	for (;;) {
+	while (running) {
 		XNextEvent(dpy, &ev);
 		if (handler[ev.type]) {
 			handler[ev.type](&ev);
@@ -393,8 +536,13 @@ void run() {
 	}
 }
 
-int main() {
+int main(int argc, char *argv[]) {
 	setup();
+	scan();
 	run();
+	if (restart) {
+		execvp(argv[0], argv);
+	}
+	XCloseDisplay(dpy);
 	return EXIT_SUCCESS;
 }
