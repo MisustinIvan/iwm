@@ -17,15 +17,15 @@ Some other options have to be configured in other places, which I have not yet r
 
 ## Keybindings
 Keybindings are configured in the `grabkeys` and `keypress` functions in `main.c`. The default keybindings are:
-- `MODKEY + Enter`: Open terminal emulator.
-- `MODKEY + q`: Close focused window.
-- `MODKEY + Space`: Open run menu.
-- `MODKEY + k`: Focus window to the left.
-- `MODKEY + l`: Focus window to the right.
-- `MODKEY + Shift + k`: Swap with left window.
-- `MODKEY + Shift + l`: Swap with right window.
-- `MODKEY + Control + r`: Restart the wm.
-- `MODKEY + Control + Shift + q`: Quit the wm.
+- `MOD4 + Enter`: Open terminal emulator.
+- `MOD4 + q`: Close focused window.
+- `MOD4 + Space`: Open run menu.
+- `MOD4 + k`: Focus window to the left.
+- `MOD4 + l`: Focus window to the right.
+- `MOD4 + Shift + k`: Swap with left window.
+- `MOD4 + Shift + l`: Swap with right window.
+- `MOD4 + Control + r`: Restart the wm.
+- `MOD4 + Control + Shift + q`: Quit the wm.
 
 # Screenshots
 ![Screenshot 1](./screenshots/screenshot1.png)
