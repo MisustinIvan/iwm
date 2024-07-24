@@ -13,6 +13,9 @@ IWM is configured by directly editing the source code. There are some configurat
 - `bg_color_const`: Background color.
 - `primary_color_const`: Primary accent color.
 
+## "Startup script"
+Other window managers can have some kind of script that runs on startup. IWM has a simple function called `init`, which has some defaults, which i recommend to change.
+
 Some other options have to be configured in other places, which I have not yet refactored into variables. These include the terminal emulator and run menu.
 
 ## Keybindings
