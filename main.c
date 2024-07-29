@@ -4,6 +4,7 @@
 #include <X11/Xatom.h>
 #include <X11/Xft/Xft.h>
 #include <X11/cursorfont.h>
+#include <X11/extensions/Xrender.h>
 #include <fontconfig/fontconfig.h>
 #include <signal.h>
 #include <stdio.h>
@@ -34,12 +35,15 @@ void focus(Client *c);
 void unfocus(Client *c);
 void manage(Window w);
 void unmanage(Window w);
+void updatewm();
 void updatetitle(Client *c);
 void spawn(const char *a);
 void init();
 void createbar();
+void updatestatus();
 void updatebar();
-void drawbar();
+void togglebar();
+void setbar(Bool arg);
 void scan();
 void quit(Bool arg);
 void sighup();
@@ -49,8 +53,9 @@ Client *wintoclient(Window wnd);
 // global variables
 Bool running = True;
 Bool restart = False;
+Bool bar = True;
 const int border_width = 0;
-const int bar_height = 40;
+const int bar_height = 35;
 const int bar_border_width = 2;
 const int bar_padding = 10;
 Display *dpy;
@@ -58,8 +63,9 @@ Window root;
 int root_width;
 int root_height;
 Window statusbar;
+char status[128];
 //"Iosevka Nerd Font Mono:size=15", "monospace:size=15"
-const char *fontname = "Iosevka Nerd Font Mono:size=20";
+const char *fontname = "Iosevka Nerd Font Mono:size=15";
 XftFont *font;
 Visual *visual;
 Colormap colormap;
@@ -109,8 +115,9 @@ void init() {
 }
 
 void loadfont() {
-	font = XftFontOpen(dpy, 0, fontname, NULL);
+	font = XftFontOpenName(dpy, 0, fontname);
 	if (font == NULL) {
+		printf("Could not load set font\n");
 		font = XftFontOpenName(dpy, 0, "monospace:size=15");
 		if (font == NULL) {
 			panic("Could not load font...");
@@ -136,14 +143,41 @@ void createbar() {
 	draw = XftDrawCreate(dpy, statusbar, visual, colormap);
 }
 
+void updatestatus() {
+	XTextProperty s;
+	XGetTextProperty(dpy, root, &s, XA_WM_NAME);
+
+	if (s.encoding == XA_STRING && s.value != NULL) {
+		strcpy(status, (char *)s.value);
+	} else {
+		strcpy(status, "IWM");
+	}
+}
+
 void updatebar() {
+	if (!bar) {
+		return;
+	}
+
 	XClearWindow(dpy, statusbar);
 	XftDrawRect(draw, &bg_color, 0, 0, root_width, bar_height);
+
+	updatestatus();
 
 	if (clients == NULL) {
 		const char *msg = "No clients";
 		XftDrawString8(draw, &fg_color, font, bar_padding, bar_height - 8, (const FcChar8*)msg, strlen(msg));
 	}
+
+	printf("%s\n", status);
+
+//	// draw status
+	XGlyphInfo status_extents;
+	XftTextExtents8(dpy, font, (const FcChar8*)status, strlen(status), &status_extents);
+
+	XftDrawRect(draw, &primary_color,     root_width-status_extents.width-2*bar_border_width-2*bar_padding, 0, status_extents.width+2*bar_padding+2*bar_border_width, bar_height);
+	XftDrawRect(draw, &bg_color,          root_width-status_extents.width-bar_border_width-2*bar_padding, bar_border_width, status_extents.width+2*bar_padding, bar_height-2*bar_border_width);
+	XftDrawString8(draw, &fg_color, font, root_width-status_extents.width-bar_border_width-bar_padding, bar_height - 8, (const FcChar8*)status, strlen(status));
 
 	int width = 0;
 	for (Client *c = clients; c != NULL; c = c->next) {
@@ -165,6 +199,34 @@ void updatebar() {
 	}
 
 	XSync(dpy, False);
+}
+
+void updatewm() {
+	Client *c = clients;
+	XWindowChanges changes;
+	while (c != NULL) {
+		if (bar) {
+			changes.height = root_height - bar_height;
+			changes.y = bar_height;
+		} else {
+			changes.height = root_height;
+			changes.y = 0;
+		}
+	
+		XConfigureWindow(dpy, c->wnd, CWHeight|CWY, &changes);
+
+		c = c->next;
+	}
+}
+
+void togglebar() {
+	setbar(!bar);
+}
+
+void setbar(Bool arg) {
+	bar = arg;
+	updatebar();
+	updatewm();
 }
 
 void configurerequest(XEvent * e) {
@@ -232,6 +294,10 @@ void keypress(XEvent * e) {
 		if (focused != NULL) {
 			XDestroyWindow(dpy, focused->wnd);
 		}
+	}
+
+	if (ev->keycode == XKeysymToKeycode(dpy, XK_b) && ev->state == Mod4Mask) {
+		togglebar();
 	}
 
 	if (ev->keycode == XKeysymToKeycode(dpy, XK_k) && ev->state == Mod4Mask) {
@@ -305,9 +371,14 @@ void expose(XEvent * e) {
 }
 
 void propertynotify(XEvent *e) {
+	XPropertyEvent *ev = &e->xproperty;
 
-	if (e->xproperty.atom == XA_WM_NAME) {
-		Client *c = wintoclient(e->xproperty.window);
+	if (ev->window == root) {
+		updatebar();
+	}
+
+	if (ev->atom == XA_WM_NAME) {
+		Client *c = wintoclient(ev->window);
 		if (c != NULL) {
 			updatetitle(c);
 			updatebar();
@@ -319,11 +390,10 @@ void updatetitle(Client *c) {
 	XTextProperty name;
 	XGetTextProperty(dpy, c->wnd, &name, XA_WM_NAME);
 
-	if (name.encoding == XA_STRING) {
+	if (name.encoding == XA_STRING && name.value != NULL) {
 		strncpy(c->name,(char *)name.value, sizeof(c->name));
 	}
 }
-
 
 void focus(Client *c) {
 	if (c == NULL) {
@@ -452,6 +522,7 @@ void grabkeys() {
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_r), Mod4Mask|ControlMask, root, True, GrabModeAsync, GrabModeAsync);
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_q), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_q), Mod4Mask|ControlMask|ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_b), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
 
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_k), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_l), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
@@ -508,7 +579,7 @@ void setup() {
 	root_width = DisplayWidth(dpy, 0);
 	root_height = DisplayHeight(dpy, 0);
 
-	XSelectInput(dpy, root, SubstructureRedirectMask|SubstructureNotifyMask);
+	XSelectInput(dpy, root, SubstructureRedirectMask|SubstructureNotifyMask|PropertyChangeMask);
 	XSync(dpy, False);
 
 	cursor = XCreateFontCursor(dpy, XC_X_cursor);
