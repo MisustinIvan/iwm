@@ -28,3 +28,17 @@ struct Bar {
 	XftColor bg_color;
 	XftColor primary_color;
 };
+
+typedef struct Monitor Monitor;
+struct Monitor {
+	int posx;
+	int posy;
+	int width;
+	int height;
+	Bar *statusbar;
+	Bool bar;
+	Client *clients;
+	Client *focused;
+	Monitor *prev;
+	Monitor *next;
+};
