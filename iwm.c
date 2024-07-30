@@ -29,6 +29,7 @@ void expose(XEvent *e);
 void propertynotify(XEvent *e);
 // window management
 void focus(Client *c);
+void focusmon(Monitor *m);
 void unfocus(Client *c);
 void manage(Window w);
 void unmanage(Window w);
@@ -107,7 +108,9 @@ void spawn(const char *cmd) {
 }
 
 void init() {
+#ifndef DEBUG
 	system("dunst");
+#endif
 	system("nitrogen --restore");
 	system("xsetroot -cursor_name left_ptr");
 	system("setxkbmap -layout us,cz -option grp:alt_shift_toggle");
@@ -186,7 +189,7 @@ void updatebar(Bar *b) {
 	if (b == NULL) {
 		return;
 	}
-
+	printf("Updating bar: %lu\n", b->wnd);
 	Monitor *bm = bartomon(b);
 	if (bm == NULL) {
 		return;
@@ -207,12 +210,12 @@ void updatebar(Bar *b) {
 	XGlyphInfo status_extents;
 	XftTextExtents8(dpy, b->font, (const FcChar8*)b->status, strlen(b->status), &status_extents);
 
-	XftDrawRect(b->draw,    &b->primary_color,        b->posx + b->width - status_extents.width - 2*b->border - 2*b->padding, 0, status_extents.width + 2*b->padding + 2*b->border, b->height);
-	XftDrawRect(b->draw,    &b->bg_color,             b->posx + b->width - status_extents.width - b->border - 2*b->padding, b->border, status_extents.width + 2*b->padding, b->height - 2*b->border);
-	XftDrawString8(b->draw, &b->fg_color, b->font,    b->posx + b->width - status_extents.width - b->border - b->padding, b->height - 8, (const FcChar8*)b->status, strlen(b->status));
+	XftDrawRect(b->draw,    &b->primary_color,     b->width - status_extents.width - 2*b->border - 2*b->padding, 0, status_extents.width + 2*b->padding + 2*b->border, b->height);
+	XftDrawRect(b->draw,    &b->bg_color,          b->width - status_extents.width - b->border - 2*b->padding, b->border, status_extents.width + 2*b->padding, b->height - 2*b->border);
+	XftDrawString8(b->draw, &b->fg_color, b->font, b->width - status_extents.width - b->border - b->padding, b->height - 8, (const FcChar8*)b->status, strlen(b->status));
 
 	//int width = 0;
-	int width = b->posx;
+	int width = 0;
 	for (Client *c = bm->clients; c != NULL; c = c->next) {
 		// updatetitle(c);
 	
@@ -249,6 +252,9 @@ void updatemon(Monitor *m) {
 			changes.y = 0;
 		}
 	
+#ifdef DEBUG
+		printf("updatemon\n");
+#endif
 		XConfigureWindow(dpy, c->wnd, CWHeight|CWY, &changes);
 
 		c = c->next;
@@ -274,7 +280,7 @@ void configurerequest(XEvent * e) {
 	Monitor *m = wintomon(ev->window);
 	if (m == NULL) {
 #ifdef DEBUG
-		printf("Monitor for window: %lu not found\n", ev->window);
+		printf("[CONFIGURE]: Monitor for window: %lu not found\n", ev->window);
 #endif
 		return;
 	}
@@ -286,6 +292,9 @@ void configurerequest(XEvent * e) {
 	changes.height = m->height - m->statusbar->height;
 	changes.stack_mode = Above;
 
+#ifdef DEBUG
+	printf("configurerequest\n");
+#endif
 	XConfigureWindow(dpy, ev->window, CWX|CWY|CWWidth|CWHeight|CWStackMode, &changes);
 }
 
@@ -374,6 +383,23 @@ void keypress(XEvent * e) {
 		if (fmon != NULL) {
 			if (fmon->focused != NULL) {
 				focus(fmon->focused->next);
+			}
+		}
+	}
+
+
+	if (ev->keycode == XKeysymToKeycode(dpy, XK_period) && ev->state == Mod4Mask) {
+		if (fmon != NULL) {
+			if (fmon->next != NULL) {
+				focusmon(fmon->next);
+			}
+		}
+	}
+
+	if (ev->keycode == XKeysymToKeycode(dpy, XK_comma) && ev->state == Mod4Mask) {
+		if (fmon != NULL) {
+			if (fmon->prev != NULL) {
+				focusmon(fmon->prev);
 			}
 		}
 	}
@@ -518,6 +544,24 @@ void unfocus(Client *c) {
 	updatebar(m->statusbar);
 }
 
+void focusmon(Monitor *m) {
+	if (m == NULL) {
+		return;
+	}
+
+	Client *old_focused = fmon->focused;
+
+	fmon = m;
+
+	if (m->focused != NULL) {
+		focus(m->focused);
+	} else if (m->clients != NULL) {
+		focus(m->clients);
+	} else {
+		unfocus(old_focused);
+	}
+}
+
 Client *wintoclient(Window wnd) {
 	Monitor *m = wintomon(wnd);
 	if (m == NULL) {
@@ -539,10 +583,20 @@ void manage(Window wnd) {
 	Monitor *m = wintomon(wnd);
 	if (m == NULL) {
 #ifdef DEBUG
-		printf("Could not find monitor for window: %lu\n", wnd);
+		printf("[MANAGE]: monitor for window: %lu not found\n", wnd);
 #endif
-		return;
-	}
+		if (fmon != NULL) {
+			m = fmon;
+#ifdef DEBUG
+			printf("Using focused monitor\n");
+#endif
+		} else {
+#ifdef DEBUG
+			panic("fmon is NULL??? fuck this");
+#endif
+			return;
+		}
+	} 
 
 	XSelectInput(dpy, c->wnd, PropertyChangeMask);
 	XSync(dpy, False);
@@ -574,12 +628,14 @@ void manage(Window wnd) {
 	changes.width = m->width;
 	changes.height = m->height - m->statusbar->height;
 	changes.stack_mode = Above;
+#ifdef DEBUG
+	printf("Changes x: %d\n", changes.x);
+	printf("Changes y: %d\n", changes.y);
+	printf("Changes width: %d\n", changes.width);
+	printf("Changes height: %d\n", changes.height);
+#endif
 
 	XConfigureWindow(dpy, c->wnd, CWX|CWY|CWWidth|CWHeight|CWStackMode, &changes);
-
-#ifdef DEBUG
-	printf("updating from manage\n");
-#endif
 	updatebar(m->statusbar);
 }
 
@@ -592,7 +648,7 @@ void unmanage(Window wnd) {
 	Monitor *m = wintomon(wnd);
 	if (m == NULL) {
 #ifdef DEBUG
-		printf("Could not find monitor for window: %lu\n", wnd);
+		printf("[UNMANAGE]: monitor for window: %lu not found\n", wnd);
 #endif
 		return;
 	}
@@ -655,6 +711,10 @@ void grabkeys() {
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_q), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_q), Mod4Mask|ControlMask|ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_b), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
+	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_period), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
+	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_comma), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
+	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_period), Mod4Mask|ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_comma), Mod4Mask|ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
 
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_k), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_l), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
@@ -684,23 +744,7 @@ void scan(void) {
 }
 
 void initmons() {
-	if (!XineramaIsActive(dpy)) {
-		Monitor *mon = malloc(sizeof(Monitor));
-
-		mon->posx = 0;
-		mon->posy = 0;
-		mon->width = root_width;
-		mon->height = root_height;
-		mon->statusbar = createbar(mon->width, mon->height, mon->posx, mon->posy);
-		mon->bar = True;
-		mon->clients = NULL;
-		mon->focused = NULL;
-		mon->prev = NULL;
-		mon->next = NULL;
-
-		mons = mon;
-		fmon = mon;
-	} else {
+	if (XineramaIsActive(dpy)) {
 		int nmons;
 		XineramaScreenInfo *info = XineramaQueryScreens(dpy, &nmons);
 		if (info == NULL) {
@@ -717,7 +761,7 @@ void initmons() {
 			mon->posy = info[i].y_org;
 			mon->width = info[i].width;
 			mon->height = info[i].height;
-			mon->statusbar = createbar(mon->width, mon->height, mon->posx, mon->posy);
+			mon->statusbar = createbar(mon->width, BAR_HEIGHT, mon->posx, mon->posy);
 			mon->bar = True;
 			mon->clients = NULL;
 			mon->focused = NULL;
@@ -734,11 +778,34 @@ void initmons() {
 
 			prev = mon;
 		}
-		XFree(info);
-
 		// dont fucking forget XD
 		mons = first;
 		fmon = first;
+
+		XFree(info);
+#ifdef DEBUG
+		printf("created multiple or single mon\n");
+#endif
+	} else {
+		Monitor *mon = malloc(sizeof(Monitor));
+
+		mon->posx = 0;
+		mon->posy = 0;
+		mon->width = root_width;
+		mon->height = root_height;
+		mon->statusbar = createbar(mon->width, BAR_HEIGHT, mon->posx, mon->posy);
+		mon->bar = True;
+		mon->clients = NULL;
+		mon->focused = NULL;
+		mon->prev = NULL;
+		mon->next = NULL;
+
+		mons = mon;
+		fmon = mon;
+
+#ifdef DEBUG
+		printf("created single mon\n");
+#endif
 	}
 }
 
@@ -816,8 +883,11 @@ void setup() {
 //#endif
 
 	grabkeys();
-
+	// prayge
+	XSync(dpy, False);
 	init();
+	// prayge
+	XSync(dpy, False);
 }
 
 void run() {
