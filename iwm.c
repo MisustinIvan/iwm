@@ -109,7 +109,6 @@ void spawn(const char *cmd) {
 }
 
 void init() {
-	system("dunst");
 	system("nitrogen --restore");
 	system("xsetroot -cursor_name left_ptr");
 	system("setxkbmap -layout us,cz -option grp:alt_shift_toggle");
