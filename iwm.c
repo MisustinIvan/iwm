@@ -12,16 +12,10 @@
 #include <string.h>
 #include <unistd.h>
 #include "util.h"
-
-typedef struct Client Client;
-struct Client {
-	char name[64];
-	Window wnd;
-	Client *prev;
-	Client *next;
-};
+#include "iwm.h"
 
 // function declarations
+// XEvent handlers
 void configurerequest(XEvent *e);
 void configurenotify(XEvent *e);
 void destroynotify(XEvent *e);
@@ -31,51 +25,47 @@ void unmapnotify(XEvent *e);
 void keypress(XEvent *e);
 void expose(XEvent *e);
 void propertynotify(XEvent *e);
+// window management
 void focus(Client *c);
 void unfocus(Client *c);
 void manage(Window w);
 void unmanage(Window w);
+Client *wintoclient(Window wnd);
 void updatewm();
 void updatetitle(Client *c);
+// bar functions
+Bar createbar(int width, int height, int posx, int posy);
+void updatestatus(Bar *b);
+void updatebar(Bar *b);
+void togglebar(Bar *b);
+void setbar(Bar *b, Bool arg);
+// wm utilities
 void spawn(const char *a);
 void init();
-void createbar();
-void updatestatus();
-void updatebar();
-void togglebar();
-void setbar(Bool arg);
 void scan();
 void quit(Bool arg);
 void sighup();
 void sigterm();
-Client *wintoclient(Window wnd);
 
 // global variables
+// state
 Bool running = True;
 Bool restart = False;
 Bool bar = True;
+// consts
 const int border_width = 0;
-const int bar_height = 35;
-const int bar_border_width = 2;
-const int bar_padding = 10;
+#define BAR_HEIGHT 35
+#define BAR_BORDER_WIDTH 2
+#define BAR_PADDING 10
+// wm stuff
 Display *dpy;
 Window root;
 int root_width;
 int root_height;
-Window statusbar;
-char status[128];
-//"Iosevka Nerd Font Mono:size=15", "monospace:size=15"
-const char *fontname = "Iosevka Nerd Font Mono:size=15";
-XftFont *font;
-Visual *visual;
-Colormap colormap;
-XftDraw *draw;
-static const char *fg_color_const = "#e4e4ef";
-XftColor fg_color;
-static const char *bg_color_const = "#2e3440";
-XftColor bg_color;
-static const char *primary_color_const = "#88c0d0";
-XftColor primary_color;
+Client *clients = NULL;
+Client *focused = NULL;
+Cursor cursor;
+// XEvent handler
 void (*handler[LASTEvent]) (XEvent *) = {
 	[ConfigureRequest] = configurerequest,
 	[ConfigureNotify] = configurenotify,
@@ -87,9 +77,21 @@ void (*handler[LASTEvent]) (XEvent *) = {
 	[Expose] = expose,
 	[PropertyNotify] = propertynotify,
 };
-Cursor cursor;
-Client *clients = NULL;
-Client *focused = NULL;
+// bar variables
+Bar statusbar;
+// Window statusbar;
+// char status[128];
+const char *fontname = "Iosevka Nerd Font Mono:size=15";
+// XftFont *font;
+// Visual *visual;
+// Colormap colormap;
+// XftDraw *draw;
+static const char *fg_color_const = "#e4e4ef";
+// XftColor fg_color;
+static const char *bg_color_const = "#2e3440";
+// XftColor bg_color;
+static const char *primary_color_const = "#88c0d0";
+// XftColor primary_color;
 
 // function definitions
 void spawn(const char *cmd) {
@@ -99,7 +101,9 @@ void spawn(const char *cmd) {
         }
         setsid();
         execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+#ifdef DEBUG
         fprintf(stderr, "execl failed: %s\n", cmd);
+#endif
         exit(EXIT_FAILURE);
     }
 }
@@ -114,88 +118,106 @@ void init() {
 	system("xmodmap -e 'keycode 66 = Escape NoSymbol Escape'");
 }
 
-void loadfont() {
-	font = XftFontOpenName(dpy, 0, fontname);
-	if (font == NULL) {
+void loadfont(XftFont **ft, const char * fontname) {
+	*ft = XftFontOpenName(dpy, 0, fontname);
+	if (*ft == NULL) {
+#ifdef DEBUG
 		printf("Could not load set font\n");
-		font = XftFontOpenName(dpy, 0, "monospace:size=15");
-		if (font == NULL) {
+#endif
+		*ft = XftFontOpenName(dpy, 0, "monospace:size=15");
+		if (*ft == NULL) {
 			panic("Could not load font...");
 		}
 	}
 }
 
-void createbar() {
-	statusbar = XCreateSimpleWindow(dpy, root, 0, 0, root_width, bar_height, 0, 0, 0);
-	XSelectInput(dpy, statusbar, ExposureMask);
+Bar createbar(int width, int height, int posx, int posy) {
+	Bar b;
+	// create the bar window
+	b.wnd = XCreateSimpleWindow(dpy, root, posx, posy, width, height, 0, 0, 0);
+	// receive expose events to redraw the bar
+	XSelectInput(dpy, b.wnd, ExposureMask);
+	// set override redirect so that we dont manage our own window
 	XSetWindowAttributes attr;
 	attr.override_redirect = True;
-	XChangeWindowAttributes(dpy, statusbar, CWOverrideRedirect, &attr);
-	XMapWindow(dpy, statusbar);
+	XChangeWindowAttributes(dpy, b.wnd, CWOverrideRedirect, &attr);
+	// map the window
+	XMapWindow(dpy, b.wnd);
+	// load the font
+	loadfont(&b.font, fontname);
+	// init the drawing context
+	b.visual = DefaultVisual(dpy, 0);
+	b.colormap = DefaultColormap(dpy, 0);
+	XftColorAllocName(dpy, b.visual, b.colormap, fg_color_const, &b.fg_color);
+	XftColorAllocName(dpy, b.visual, b.colormap, bg_color_const, &b.bg_color);
+	XftColorAllocName(dpy, b.visual, b.colormap, primary_color_const, &b.primary_color);
+	b.draw = XftDrawCreate(dpy, b.wnd, b.visual, b.colormap);
+	// fill out the remaining fields
+	b.width = width;
+	b.height = height;
+	b.posx = posx;
+	b.posy = posy;
+	b.border = BAR_BORDER_WIDTH;
+	b.padding = BAR_PADDING;
 
-	loadfont();
-
-	visual = DefaultVisual(dpy, 0);
-	colormap = DefaultColormap(dpy, 0);
-	XftColorAllocName(dpy, visual, colormap, fg_color_const, &fg_color);
-	XftColorAllocName(dpy, visual, colormap, bg_color_const, &bg_color);
-	XftColorAllocName(dpy, visual, colormap, primary_color_const, &primary_color);
-	draw = XftDrawCreate(dpy, statusbar, visual, colormap);
+	return b;
 }
 
-void updatestatus() {
+void updatestatus(Bar *b) {
 	XTextProperty s;
 	XGetTextProperty(dpy, root, &s, XA_WM_NAME);
 
 	if (s.encoding == XA_STRING && s.value != NULL) {
-		strcpy(status, (char *)s.value);
+		strcpy(b->status, (char *)s.value);
 	} else {
-		strcpy(status, "IWM");
+		strcpy(b->status, "IWM");
 	}
 }
 
-void updatebar() {
-	if (!bar) {
+void updatebar(Bar *b) {
+	if (b == NULL) {
 		return;
 	}
 
-	XClearWindow(dpy, statusbar);
-	XftDrawRect(draw, &bg_color, 0, 0, root_width, bar_height);
+	XClearWindow(dpy, b->wnd);
+	XftDrawRect(b->draw, &b->bg_color, 0, 0, b->width, b->height);
 
-	updatestatus();
+	updatestatus(b);
 
 	if (clients == NULL) {
 		const char *msg = "No clients";
-		XftDrawString8(draw, &fg_color, font, bar_padding, bar_height - 8, (const FcChar8*)msg, strlen(msg));
+
+		XftDrawStringUtf8(b->draw, &b->fg_color, b->font, b->padding, b->height - 8, (const FcChar8*)msg, strlen(msg));
 	}
 
-	printf("%s\n", status);
-
-//	// draw status
+	// draw status
 	XGlyphInfo status_extents;
-	XftTextExtents8(dpy, font, (const FcChar8*)status, strlen(status), &status_extents);
+	XftTextExtents8(dpy, b->font, (const FcChar8*)b->status, strlen(b->status), &status_extents);
 
-	XftDrawRect(draw, &primary_color,     root_width-status_extents.width-2*bar_border_width-2*bar_padding, 0, status_extents.width+2*bar_padding+2*bar_border_width, bar_height);
-	XftDrawRect(draw, &bg_color,          root_width-status_extents.width-bar_border_width-2*bar_padding, bar_border_width, status_extents.width+2*bar_padding, bar_height-2*bar_border_width);
-	XftDrawString8(draw, &fg_color, font, root_width-status_extents.width-bar_border_width-bar_padding, bar_height - 8, (const FcChar8*)status, strlen(status));
+	XftDrawRect(b->draw,    &b->primary_color,        b->posx + b->width - status_extents.width - 2*b->border - 2*b->padding, 0, status_extents.width + 2*b->padding + 2*b->border, b->height);
+	XftDrawRect(b->draw,    &b->bg_color,             b->posx + b->width - status_extents.width - b->border - 2*b->padding, b->border, status_extents.width + 2*b->padding, b->height - 2*b->border);
+	XftDrawString8(b->draw, &b->fg_color, b->font,    b->posx + b->width - status_extents.width - b->border - b->padding, b->height - 8, (const FcChar8*)b->status, strlen(b->status));
 
-	int width = 0;
+	//int width = 0;
+	int width = b->posx;
 	for (Client *c = clients; c != NULL; c = c->next) {
 		// updatetitle(c);
 	
+#ifdef DEBUG
 		printf("Drawing %lu\n", c->wnd);
+#endif
 		XGlyphInfo extents;
-		XftTextExtents8(dpy, font, (const FcChar8*)c->name, strlen(c->name), &extents);
+		XftTextExtents8(dpy, b->font, (const FcChar8*)c->name, strlen(c->name), &extents);
 
 		if (c == focused) {
-			XftDrawRect(draw, &primary_color, width, 0, extents.width+2*bar_padding, bar_height);
-			XftDrawString8(draw, &bg_color, font, width+bar_padding, bar_height - 8, (const FcChar8*)c->name, strlen(c->name));
+			XftDrawRect(b->draw, &b->primary_color, width, 0, extents.width + 2*b->padding, b->height);
+			XftDrawString8(b->draw, &b->bg_color, b->font, width+b->padding, b->height - 8, (const FcChar8*)c->name, strlen(c->name));
 		} else {
-			XftDrawRect(draw, &primary_color, width, 0, extents.width+2*bar_padding, bar_height);
-			XftDrawRect(draw, &bg_color, width+bar_border_width, bar_border_width, extents.width+2*bar_padding-2*bar_border_width, bar_height-2*bar_border_width);
-			XftDrawString8(draw, &fg_color, font, width+bar_padding, bar_height - 8, (const FcChar8*)c->name, strlen(c->name));
+			XftDrawRect(b->draw, &b->primary_color, width, 0, extents.width + 2*b->padding, b->height);
+			XftDrawRect(b->draw, &b->bg_color, width+b->border, b->border, extents.width + 2*b->padding - 2*b->border, b->height - 2*b->border);
+			XftDrawString8(b->draw, &b->fg_color, b->font, width+b->padding, b->height - 8, (const FcChar8*)c->name, strlen(c->name));
 		}
-		width += extents.width + bar_padding*2;
+		width += extents.width + b->padding*2;
 	}
 
 	XSync(dpy, False);
@@ -206,8 +228,8 @@ void updatewm() {
 	XWindowChanges changes;
 	while (c != NULL) {
 		if (bar) {
-			changes.height = root_height - bar_height;
-			changes.y = bar_height;
+			changes.height = root_height - statusbar.height;
+			changes.y = statusbar.height;
 		} else {
 			changes.height = root_height;
 			changes.y = 0;
@@ -219,13 +241,13 @@ void updatewm() {
 	}
 }
 
-void togglebar() {
-	setbar(!bar);
+void togglebar(Bar *b) {
+	setbar(b, !bar);
 }
 
-void setbar(Bool arg) {
+void setbar(Bar *b, Bool arg) {
 	bar = arg;
-	updatebar();
+	updatebar(b);
 	updatewm();
 }
 
@@ -234,9 +256,9 @@ void configurerequest(XEvent * e) {
 
 	XWindowChanges changes;
 	changes.x = 0;
-	changes.y = bar_height;
+	changes.y = statusbar.height;
 	changes.width = root_width;
-	changes.height = root_height - bar_height;
+	changes.height = root_height - statusbar.height;
 	changes.border_width = border_width;
 	changes.stack_mode = Above;
 
@@ -245,12 +267,16 @@ void configurerequest(XEvent * e) {
 
 void configurenotify(XEvent * e) {
 	XConfigureEvent *ev = &e->xconfigure;
+#ifdef DEBUG
 	printf("A window %lu has been configured\n", ev->window);
+#endif
 }
 
 void destroynotify(XEvent * e) {
 	XDestroyWindowEvent *ev = &e->xdestroywindow;
+#ifdef DEBUG
 	printf("A window %lu has been destroyed\n", ev->window);
+#endif
 }
 
 void maprequest(XEvent * e) {
@@ -259,7 +285,9 @@ void maprequest(XEvent * e) {
 }
 void mapnotify(XEvent * e) {
 	XMapEvent *ev = &e->xmap;
+#ifdef DEBUG
 	printf("A window %lu has been mapped\n", ev->window);
+#endif
 	if (!ev->override_redirect) {
 		manage(ev->window);
 	}
@@ -267,12 +295,16 @@ void mapnotify(XEvent * e) {
 
 void unmapnotify(XEvent * e) {
 	XUnmapEvent *ev = &e->xunmap;
+#ifdef DEBUG
 	printf("A window %lu has been unmapped\n", ev->window);
+#endif
 	unmanage(ev->window);
 }
 void keypress(XEvent * e) {
 	XKeyPressedEvent *ev = &e->xkey;
+#ifdef DEBUG
 	printf("A key %d has been pressed\n", ev->keycode);
+#endif
 
 	if (ev->keycode == XKeysymToKeycode(dpy, XK_Return) && ev->state == Mod4Mask) {
 		spawn("alacritty");
@@ -297,7 +329,7 @@ void keypress(XEvent * e) {
 	}
 
 	if (ev->keycode == XKeysymToKeycode(dpy, XK_b) && ev->state == Mod4Mask) {
-		togglebar();
+		togglebar(&statusbar);
 	}
 
 	if (ev->keycode == XKeysymToKeycode(dpy, XK_k) && ev->state == Mod4Mask) {
@@ -331,7 +363,7 @@ void keypress(XEvent * e) {
 
 				if (other == clients) clients = focused;
 
-				updatebar();
+				updatebar(&statusbar);
 			}
 		}
 	}
@@ -355,7 +387,7 @@ void keypress(XEvent * e) {
 
 				if (focused == clients) clients = other;
 
-				updatebar();
+				updatebar(&statusbar);
 			}
 		}
 	}
@@ -363,10 +395,12 @@ void keypress(XEvent * e) {
 
 void expose(XEvent * e) {
 	XExposeEvent *ev = &e->xexpose;
+#ifdef DEBUG
 	printf("An expose event has been triggered\n");
+#endif
 	
-	if (ev->window == statusbar) {
-		updatebar();
+	if (ev->window == statusbar.wnd) {
+		updatebar(&statusbar);
 	}
 }
 
@@ -374,14 +408,14 @@ void propertynotify(XEvent *e) {
 	XPropertyEvent *ev = &e->xproperty;
 
 	if (ev->window == root) {
-		updatebar();
+		updatebar(&statusbar);
 	}
 
 	if (ev->atom == XA_WM_NAME) {
 		Client *c = wintoclient(ev->window);
 		if (c != NULL) {
 			updatetitle(c);
-			updatebar();
+			updatebar(&statusbar);
 		}
 	}
 }
@@ -399,12 +433,14 @@ void focus(Client *c) {
 	if (c == NULL) {
 		return;
 	}
+#ifdef DEBUG
 	printf("focusing %lu\n", c->wnd);
+#endif
 	focused = c;
 	XSetInputFocus(dpy, c->wnd, RevertToPointerRoot, CurrentTime);
 	XRaiseWindow(dpy, c->wnd);
 	XSync(dpy, False);
-	updatebar();
+	updatebar(&statusbar);
 }
 
 void unfocus(Client *c) {
@@ -412,10 +448,12 @@ void unfocus(Client *c) {
 		return;
 	}
 	focused = NULL;
+#ifdef DEBUG
 	printf("focusing root\n");
+#endif
 	XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
 	XSync(dpy, False);
-	updatebar();
+	updatebar(&statusbar);
 }
 
 Client *wintoclient(Window wnd) {
@@ -451,20 +489,24 @@ void manage(Window wnd) {
 	}
 
 	focus(c);
+#ifdef DEBUG
 	printf("Managing %lu:%s\n", c->wnd, c->name);
+#endif
 
 	XWindowChanges changes;
 	changes.x = 0;
-	changes.y = bar_height;
+	changes.y = statusbar.height;
 	changes.width = root_width;
-	changes.height = root_height - bar_height;
+	changes.height = root_height - statusbar.height;
 	changes.border_width = border_width;
 	changes.stack_mode = Above;
 
 	XConfigureWindow(dpy, c->wnd, CWX|CWY|CWWidth|CWHeight|CWBorderWidth|CWStackMode, &changes);
 
+#ifdef DEBUG
 	printf("updating from manage\n");
-	updatebar();
+#endif
+	updatebar(&statusbar);
 }
 
 void unmanage(Window wnd) {
@@ -493,10 +535,14 @@ void unmanage(Window wnd) {
 		unfocus(c);
 
 		if (c->prev != NULL) {
+#ifdef DEBUG
 			printf("focusing prev\n");
+#endif
 			focus(c->prev);
 		} else if (c->next != NULL) {
+#ifdef DEBUG
 			printf("focusing next\n");
+#endif
 			focus(c->next);
 		}
 	}
@@ -509,11 +555,15 @@ void unmanage(Window wnd) {
 		}
 	}
 
+#ifdef DEBUG
 	printf("Unmanaging %lu\n", c->wnd);
+#endif
 	free(c);
 
+#ifdef DEBUG
 	printf("updating from unmanage\n");
-	updatebar();
+#endif
+	updatebar(&statusbar);
 }
 
 void grabkeys() {
@@ -586,8 +636,14 @@ void setup() {
 	XDefineCursor(dpy, root, cursor);
 	XSync(dpy, False);
 
-	createbar();
-	updatebar();
+	statusbar = createbar(root_width, BAR_HEIGHT, 0,0);
+#ifdef DEBUG
+	printf("created bar\n");
+#endif
+	updatebar(&statusbar);
+#ifdef DEBUG
+	printf("updated bar\n");
+#endif
 
 	grabkeys();
 
@@ -602,7 +658,9 @@ void run() {
 		if (handler[ev.type]) {
 			handler[ev.type](&ev);
 		} else {
+#ifdef DEBUG
 			printf("No handler for event %d\n", ev.type);
+#endif
 		}
 	}
 }
