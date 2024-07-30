@@ -57,7 +57,7 @@ void sigterm();
 // state
 Bool running = True;
 Bool restart = False;
-Bool bar = True;
+// Bool bar = True;
 // consts
 #define BAR_HEIGHT 35
 #define BAR_BORDER_WIDTH 2
@@ -69,9 +69,6 @@ int root_width;
 int root_height;
 Monitor *mons = NULL;
 Monitor *fmon = NULL;
-
-//Client *clients = NULL;
-//Client *focused = NULL;
 Cursor cursor;
 // XEvent handler
 void (*handler[LASTEvent]) (XEvent *) = {
@@ -108,9 +105,6 @@ void spawn(const char *cmd) {
 }
 
 void init() {
-#ifndef DEBUG
-	system("dunst");
-#endif
 	system("nitrogen --restore");
 	system("xsetroot -cursor_name left_ptr");
 	system("setxkbmap -layout us,cz -option grp:alt_shift_toggle");
@@ -167,11 +161,13 @@ Bar *createbar(int width, int height, int posx, int posy) {
 Monitor *bartomon(Bar *b) {
 	Monitor *cm = mons;
 	while (cm != NULL) {
-		if (cm->statusbar == b) {
+		// better to identify by window, not the pointer
+		if (cm->statusbar->wnd == b->wnd) {
 			return cm;
 		}
 		cm = cm->next;
 	}
+	return cm;
 }
 
 void updatestatus(Bar *b) {
@@ -189,7 +185,9 @@ void updatebar(Bar *b) {
 	if (b == NULL) {
 		return;
 	}
+#ifdef DEBUG
 	printf("Updating bar: %lu\n", b->wnd);
+#endif
 	Monitor *bm = bartomon(b);
 	if (bm == NULL) {
 		return;
@@ -214,7 +212,7 @@ void updatebar(Bar *b) {
 	XftDrawRect(b->draw,    &b->bg_color,          b->width - status_extents.width - b->border - 2*b->padding, b->border, status_extents.width + 2*b->padding, b->height - 2*b->border);
 	XftDrawString8(b->draw, &b->fg_color, b->font, b->width - status_extents.width - b->border - b->padding, b->height - 8, (const FcChar8*)b->status, strlen(b->status));
 
-	//int width = 0;
+	// width = b->posx makes no sense, because it's already in relation to the bar
 	int width = 0;
 	for (Client *c = bm->clients; c != NULL; c = c->next) {
 		// updatetitle(c);
@@ -239,22 +237,20 @@ void updatebar(Bar *b) {
 	XSync(dpy, False);
 }
 
+// updatewm became updatemon, because we have more than one monitor(screen)
 void updatemon(Monitor *m) {
 	Client *c = m->clients;
 	XWindowChanges changes;
 
 	while (c != NULL) {
-		if (bar) {
-			changes.height = root_height - m->statusbar->height;
-			changes.y = m->statusbar->height;
+		if (m->bar) {
+			changes.height = m->height - m->statusbar->height;
+			changes.y = m->posy + m->statusbar->height;
 		} else {
-			changes.height = root_height;
-			changes.y = 0;
+			changes.height = m->height;
+			changes.y = m->posy;
 		}
 	
-#ifdef DEBUG
-		printf("updatemon\n");
-#endif
 		XConfigureWindow(dpy, c->wnd, CWHeight|CWY, &changes);
 
 		c = c->next;
@@ -262,14 +258,18 @@ void updatemon(Monitor *m) {
 }
 
 void togglebar(Bar *b) {
-	setbar(b, !bar);
+	Monitor *m = bartomon(b);
+	if (m != NULL) {
+		setbar(b, m->bar);
+	}
 }
 
 void setbar(Bar *b, Bool arg) {
-	bar = arg;
-	updatebar(b);
+	// is this necessary?
+	// updatebar(b);
 	Monitor *m = bartomon(b);
 	if (m != NULL) {
+		m->bar = arg;
 		updatemon(m);
 	}
 }
@@ -280,16 +280,25 @@ void configurerequest(XEvent * e) {
 	Monitor *m = wintomon(ev->window);
 	if (m == NULL) {
 #ifdef DEBUG
-		printf("[CONFIGURE]: Monitor for window: %lu not found\n", ev->window);
+		printf("[CONFIGURE]: Monitor for window: %lu not found, using focused\n", ev->window);
 #endif
-		return;
+		if (fmon != NULL) {
+			m = fmon;
+		} else {
+			panic("fmon is NULL???");
+		}
 	}
 
 	XWindowChanges changes;
 	changes.x = m->posx;
-	changes.y = m->posy + m->statusbar->height;
 	changes.width = m->width;
-	changes.height = m->height - m->statusbar->height;
+	if (m->bar) {
+		changes.y = m->posy + m->statusbar->height;
+		changes.height = m->height - m->statusbar->height;
+	} else {
+		changes.y = m->posy;
+		changes.height = m->height;
+	}
 	changes.stack_mode = Above;
 
 #ifdef DEBUG
@@ -591,12 +600,9 @@ void manage(Window wnd) {
 			printf("Using focused monitor\n");
 #endif
 		} else {
-#ifdef DEBUG
 			panic("fmon is NULL??? fuck this");
-#endif
-			return;
 		}
-	} 
+	}
 
 	XSelectInput(dpy, c->wnd, PropertyChangeMask);
 	XSync(dpy, False);
@@ -624,11 +630,17 @@ void manage(Window wnd) {
 
 	XWindowChanges changes;
 	changes.x = m->posx;
-	changes.y = m->posy + m->statusbar->height;
 	changes.width = m->width;
-	changes.height = m->height - m->statusbar->height;
+	if (m->bar) {
+		changes.y = m->posy + m->statusbar->height;
+		changes.height = m->height - m->statusbar->height;
+	} else {
+		changes.y = m->posy;
+		changes.height = m->height;
+	}
 	changes.stack_mode = Above;
 #ifdef DEBUG
+	printf("[MANAGING]\n");
 	printf("Changes x: %d\n", changes.x);
 	printf("Changes y: %d\n", changes.y);
 	printf("Changes width: %d\n", changes.width);
@@ -776,6 +788,8 @@ void initmons() {
 				mon->next = NULL;
 			}
 
+			updatebar(mon->statusbar);
+
 			prev = mon;
 		}
 		// dont fucking forget XD
@@ -803,6 +817,8 @@ void initmons() {
 		mons = mon;
 		fmon = mon;
 
+		updatebar(mon->statusbar);
+
 #ifdef DEBUG
 		printf("created single mon\n");
 #endif
@@ -828,6 +844,7 @@ Monitor *wintomon(Window w) {
 	return cm;
 }
 
+// unused for now
 void free_monitor(Monitor *m) {
 	if (m->statusbar != NULL) {
 		free(m->statusbar);
