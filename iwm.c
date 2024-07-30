@@ -52,6 +52,12 @@ Monitor *wintomon(Window wnd);
 void quit(Bool arg);
 void sighup();
 void sigterm();
+// linked list utils
+Client *ripclient(Client *c, Client *head);
+void pushclient(Client *c, Client *head);
+void insertafter(Client *c, Client *o, Client *head);
+Client *swapnext(Client *c, Client *head);
+Client *swapprev(Client *c, Client *head);
 
 // global variables
 // state
@@ -410,6 +416,18 @@ void keypress(XEvent * e) {
 			if (fmon->prev != NULL) {
 				focusmon(fmon->prev);
 			}
+		}
+	}
+
+	if (ev->keycode == XKeysymToKeycode(dpy, XK_period) && ev->state == (Mod4Mask|ShiftMask)) {
+		if (fmon != NULL) {
+			printf("TODO: move client to next monitor\n");
+		}
+	}
+
+	if (ev->keycode == XKeysymToKeycode(dpy, XK_comma) && ev->state == (Mod4Mask|ShiftMask)) {
+		if (fmon != NULL) {
+			printf("TODO: move client to prev monitor\n");
 		}
 	}
 
@@ -865,6 +883,92 @@ void sighup() {
 
 void sigterm() {
 	quit(False);
+}
+
+Client *ripclient(Client *c, Client *head) {
+	if (c == NULL) return NULL;
+	if (head == NULL) return NULL;
+
+	Client *left = c->prev;
+	Client *right = c->next;
+
+	if (left != NULL) left->next = right;
+	if (right != NULL) right->prev = left;
+	if (c == head) head = right;
+
+	c->prev = NULL;
+	c->next = NULL;
+
+	return c;
+}
+
+void pushclient(Client *c, Client *head) {
+	if (c == NULL) return;
+	if (head == NULL) return;
+
+	Client *cc = head;
+	while (cc->next != NULL) {
+		cc = cc->next;
+	}
+
+	cc->next = c;
+	c->prev = cc;
+	c->next = NULL;
+}
+
+void insertafter(Client *c, Client *o, Client *head) {
+	if (c == NULL) return;
+	if (o == NULL) return;
+	if (head == NULL) return;
+
+	Client *right = o->next;
+
+	o->next = c;
+	c->prev = o;
+	c->next = right;
+	if (right != NULL) right->prev = c;
+}
+
+Client *swapnext(Client *c, Client *head) {
+    if (c == NULL || head == NULL || c->next == NULL) return head;
+
+    Client *left = c->prev;
+    Client *right = c->next;
+    Client *rright = right->next;
+
+    if (left != NULL) left->next = right;
+    right->prev = left;
+
+    right->next = c;
+    c->prev = right;
+
+    c->next = rright;
+    if (rright != NULL) rright->prev = c;
+
+    if (head == c) head = right;
+
+	return head;
+}
+
+Client *swapprev(Client *c, Client *head) {
+	if (c == NULL || head == NULL || c->prev == NULL) return head;
+
+	Client *left = c->prev;
+	Client *lleft = left->prev;
+	Client *right = c->next;
+
+	if (lleft != NULL) lleft->next = c;
+	c->prev = lleft;
+
+	c->next = left;
+	left->prev = c;
+
+	left->next = right;
+	if (right != NULL) right->prev = left;
+
+	if (head == left) head = c;
+
+	return head;
 }
 
 void setup() {
