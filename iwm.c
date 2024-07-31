@@ -55,11 +55,11 @@ void quit(Bool arg);
 void sighup();
 void sigterm();
 // linked list utils
-Client *ripclient(Client *c, Client *head);
-void pushclient(Client *c, Client *head);
-void insertafter(Client *c, Client *o, Client *head);
-Client *swapnext(Client *c, Client *head);
-Client *swapprev(Client *c, Client *head);
+Client *ripclient(Client *c, Client **head);
+void pushclient(Client *c, Client **head);
+void insertafter(Client *c, Client *o, Client **head);
+void swapnext(Client *c, Client **head);
+void swapprev(Client *c, Client **head);
 
 // global variables
 // state
@@ -202,15 +202,7 @@ Bar *createbar(int width, int height, int posx, int posy) {
 }
 
 Monitor *bartomon(Bar *b) {
-	Monitor *cm = mons;
-	while (cm != NULL) {
-		// better to identify by window, not the pointer
-		if (cm->statusbar->wnd == b->wnd) {
-			return cm;
-		}
-		cm = cm->next;
-	}
-	return cm;
+	return wintomon(b->wnd);
 }
 
 void updatestatus(Bar *b) {
@@ -288,6 +280,8 @@ void updatebar(Bar *b) {
 
 // updatewm became updatemon, because we have more than one monitor(screen)
 void updatemon(Monitor *m) {
+	if (m == NULL) return;
+
 	Client *c = m->clients;
 	XWindowChanges changes;
 
@@ -299,10 +293,30 @@ void updatemon(Monitor *m) {
 			changes.height = m->height;
 			changes.y = m->posy;
 		}
+
+		changes.width = m->width;
+		changes.x = m->posx;
+		changes.stack_mode = Above;
 	
-		XConfigureWindow(dpy, c->wnd, CWHeight|CWY, &changes);
+		XConfigureWindow(dpy, c->wnd, CWHeight|CWWidth|CWY|CWX|CWStackMode, &changes);
 
 		c = c->next;
+	}
+
+	// when moving window to empty client list on another monitor...
+	// if (m->focused == NULL && m->clients != NULL) {
+	// 	m->focused = m->clients;
+	// }
+
+	if (m->focused != NULL) {
+		XWindowChanges changes;
+		changes.stack_mode = Above;
+		XConfigureWindow(dpy, m->focused->wnd, CWStackMode, &changes);
+	}
+
+
+	if (fmon == m) {
+		focus(m->focused);
 	}
 }
 
@@ -463,69 +477,77 @@ void keypress(XEvent * e) {
 
 	if (ev->keycode == XKeysymToKeycode(dpy, XK_period) && ev->state == (Mod4Mask|ShiftMask)) {
 		if (fmon != NULL) {
-			printf("TODO: move client to next monitor\n");
+			if (fmon->focused != NULL) {
+				Client *prev = fmon->focused->prev;
+				Client *next = fmon->focused->next;
+
+				Client *c = ripclient(fmon->focused, &fmon->clients);
+				pushclient(c, &fmon->next->clients);
+
+				if (prev != NULL) {
+					focus(prev);
+				} else if (next != NULL) {
+					focus(next);
+				} else {
+					unfocus(c);
+				}
+
+				if (fmon->next != NULL) {
+					if (fmon->next->focused == NULL) {
+						fmon->next->focused = c;
+					}
+				}
+
+				updatemon(fmon);
+				updatebar(fmon->statusbar);
+				updatemon(fmon->next);
+				updatebar(fmon->next->statusbar);
+			}
 		}
 	}
 
 	if (ev->keycode == XKeysymToKeycode(dpy, XK_comma) && ev->state == (Mod4Mask|ShiftMask)) {
 		if (fmon != NULL) {
-			printf("TODO: move client to prev monitor\n");
+			if (fmon->focused != NULL) {
+				Client *prev = fmon->focused->prev;
+				Client *next = fmon->focused->next;
+
+				Client *c = ripclient(fmon->focused, &fmon->clients);
+				pushclient(c, &fmon->prev->clients);
+
+				if (prev != NULL) {
+					focus(prev);
+				} else if (next != NULL) {
+					focus(next);
+				} else {
+					unfocus(c);
+				}
+
+				if (fmon->prev != NULL) {
+					if (fmon->prev->focused == NULL) {
+						fmon->prev->focused = c;
+					}
+				}
+
+				updatemon(fmon);
+				updatebar(fmon->statusbar);
+				updatemon(fmon->prev);
+				updatebar(fmon->prev->statusbar);
+			}
 		}
 	}
 
 	if (ev->keycode == XKeysymToKeycode(dpy, XK_k) && ev->state == (Mod4Mask|ShiftMask)) {
 		if (fmon != NULL) {
-			if (fmon->focused != NULL) {
-				if (fmon->focused->prev != NULL) {
-					// Client *focused = focused;
-					Client *other = fmon->focused->prev;
-
-					Client *left = fmon->focused->prev->prev;
-					Client *right = fmon->focused->next;
-
-					if (left != NULL) left->next = fmon->focused;
-					fmon->focused->prev = left;
-					if (right != NULL) right->prev = other;
-					other->next = right;
-
-					fmon->focused->next = other;
-					other->prev = fmon->focused;
-
-					if (other == fmon->clients) fmon->clients = fmon->focused;
-
-					if (fmon->statusbar != NULL) {
-						updatebar(fmon->statusbar);
-					}
-				}
-			}
+			swapprev(fmon->focused, &fmon->clients);
+			updatebar(fmon->statusbar);
 		}
 	}
 
 	if (ev->keycode == XKeysymToKeycode(dpy, XK_l) && ev->state == (Mod4Mask|ShiftMask)) {
 		if (fmon != NULL) {
-			if (fmon->focused != NULL) {
-				if (fmon->focused->next != NULL) {
-					// Client *focused = focused;
-					Client *other = fmon->focused->next;
-
-					Client *left = fmon->focused->prev;
-					Client *right = other->next;
-
-					if (right != NULL) right->prev = fmon->focused;
-					fmon->focused->next = right;
-					if (left != NULL) left->next = other;
-					other->prev = left;
-
-					fmon->focused->prev = other;
-					other->next = fmon->focused;
-
-					if (fmon->focused == fmon->clients) fmon->clients = other;
-
-					if (fmon->statusbar != NULL) {
-						updatebar(fmon->statusbar);
-					}
-				}
-			}
+			swapnext(fmon->focused, &fmon->clients);
+			updatebar(fmon->statusbar);
 		}
 	}
 }
@@ -671,22 +693,9 @@ void manage(Window wnd) {
 	XSync(dpy, False);
 
 	updatetitle(c);
-
-	if (m->clients == NULL) {
-		c->next = NULL;
-		c->prev = NULL;
-		m->clients = c;
-	} else {
-		Client *cc = m->clients;
-		while (cc->next != NULL) {
-			cc = cc-> next;
-		}
-		c->prev = cc;
-		c->next = NULL;
-		cc->next = c;
-	}
-
+	pushclient(c, &m->clients);
 	focus(c);
+
 #ifdef DEBUG
 	printf("Managing %lu:%s\n", c->wnd, c->name);
 #endif
@@ -728,45 +737,16 @@ void unmanage(Window wnd) {
 		return;
 	}
 
-	if (c->next != NULL) {
-		if (c->prev != NULL) {
-			c->next->prev = c->prev;
-		} else {
-			c->next->prev = NULL;
-		}
-	}
-
-	if (c->prev != NULL) {
-		if (c->next != NULL) {
-			c->prev->next = c->next;
-		} else {
-			c->prev->next = NULL;
-		}
-	}
-
 	if (m->focused == c) {
 		unfocus(c);
-
 		if (c->prev != NULL) {
-#ifdef DEBUG
-			printf("focusing prev\n");
-#endif
 			focus(c->prev);
 		} else if (c->next != NULL) {
-#ifdef DEBUG
-			printf("focusing next\n");
-#endif
 			focus(c->next);
 		}
 	}
 
-	if (c->prev == NULL) {
-		if (c->next == NULL) {
-			m->clients = NULL;
-		} else {
-			m->clients = c->next;
-		}
-	}
+	ripclient(c, &m->clients);
 
 #ifdef DEBUG
 	printf("Unmanaging %lu\n", c->wnd);
@@ -930,28 +910,33 @@ void sigterm() {
 	quit(False);
 }
 
-Client *ripclient(Client *c, Client *head) {
-	if (c == NULL) return NULL;
-	if (head == NULL) return NULL;
+Client *ripclient(Client *c, Client **head) {
+	if (c == NULL || head == NULL || *head == NULL) return NULL;
 
 	Client *left = c->prev;
 	Client *right = c->next;
 
 	if (left != NULL) left->next = right;
 	if (right != NULL) right->prev = left;
-	if (c == head) head = right;
+	if (c == *head) *head = right;
 
-	c->prev = NULL;
 	c->next = NULL;
+	c->prev = NULL;
 
 	return c;
 }
 
-void pushclient(Client *c, Client *head) {
-	if (c == NULL) return;
-	if (head == NULL) return;
+void pushclient(Client *c, Client **head) {
+	if (c == NULL || head == NULL) return;
 
-	Client *cc = head;
+	if (*head == NULL) {
+		*head = c;
+		c->prev = NULL;
+		c->next = NULL;
+		return;
+	}
+
+	Client *cc = *head;
 	while (cc->next != NULL) {
 		cc = cc->next;
 	}
@@ -961,59 +946,61 @@ void pushclient(Client *c, Client *head) {
 	c->next = NULL;
 }
 
-void insertafter(Client *c, Client *o, Client *head) {
+void insertafter(Client *c, Client *o, Client **head) {
 	if (c == NULL) return;
-	if (o == NULL) return;
 	if (head == NULL) return;
 
+	if (o == NULL) {
+		c->next = (*head);
+		if (*head != NULL) (*head)->prev = c;
+		*head = c;
+		c->prev = NULL;
+	} else {
+		Client *right = o->next;
+
+		o->next = c;
+		c->prev = o;
+		c->next = right;
+		if (right != NULL) right->prev = c;
+	}
+}
+
+void swapnext(Client *c, Client **head) {
+    if (c == NULL || head == NULL || c->next == NULL || *head == NULL) return;
+
+	Client *o = c->next;
+	Client *left = c->prev;
 	Client *right = o->next;
+
+	if (left != NULL) left->next = o;
+	if (right != NULL) right->prev = c;
+
+	o->prev = left;
+	c->next = right;
 
 	o->next = c;
 	c->prev = o;
-	c->next = right;
-	if (right != NULL) right->prev = c;
+
+	if (c == *head) *head = o;
 }
 
-Client *swapnext(Client *c, Client *head) {
-    if (c == NULL || head == NULL || c->next == NULL) return head;
+void swapprev(Client *c, Client **head) {
+	if (c == NULL || head == NULL || c->prev == NULL || *head == NULL) return;
 
-    Client *left = c->prev;
-    Client *right = c->next;
-    Client *rright = right->next;
-
-    if (left != NULL) left->next = right;
-    right->prev = left;
-
-    right->next = c;
-    c->prev = right;
-
-    c->next = rright;
-    if (rright != NULL) rright->prev = c;
-
-    if (head == c) head = right;
-
-	return head;
-}
-
-Client *swapprev(Client *c, Client *head) {
-	if (c == NULL || head == NULL || c->prev == NULL) return head;
-
-	Client *left = c->prev;
-	Client *lleft = left->prev;
+	Client *o = c->prev;
+	Client *left = o->prev;
 	Client *right = c->next;
 
-	if (lleft != NULL) lleft->next = c;
-	c->prev = lleft;
+	if (left != NULL) left->next = c;
+	if (right != NULL) right->prev = o;
 
-	c->next = left;
-	left->prev = c;
+	o->next = right;
+	c->prev = left;
 
-	left->next = right;
-	if (right != NULL) right->prev = left;
+	o->prev = c;
+	c->next = o;
 
-	if (head == left) head = c;
-
-	return head;
+	if (o == *head) *head = c;
 }
 
 void setup() {
@@ -1039,15 +1026,6 @@ void setup() {
 	initmons();
 
 //	// TODO: fix memory bullshit
-//	statusbar = *createbar(root_width, BAR_HEIGHT, 0,0);
-//#ifdef DEBUG
-//	printf("created bar\n");
-//#endif
-//	updatebar(&statusbar);
-//#ifdef DEBUG
-//	printf("updated bar\n");
-//#endif
-
 	grabkeys();
 	// prayge
 	XSync(dpy, False);
