@@ -45,6 +45,8 @@ void togglebar(Bar *b);
 void setbar(Bar *b, Bool arg);
 // wm utilities
 void spawn(const char *a);
+void termclient(Client *c);
+void killclient(Client *c);
 void init();
 void scan();
 void initmons();
@@ -108,6 +110,41 @@ void spawn(const char *cmd) {
 #endif
         exit(EXIT_FAILURE);
     }
+}
+
+void termclient(Client *c) {
+	Atom a = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
+
+	int n;
+	Atom *protocols;
+	int exists = False;
+	XEvent ev;
+
+	if (XGetWMProtocols(dpy, c->wnd, &protocols, &n)) {
+		while (!exists && n--)
+			exists = protocols[n] == a;
+		XFree(protocols);
+	}
+	if (exists) {
+		ev.type = ClientMessage;
+		ev.xclient.window = c->wnd;
+		ev.xclient.message_type = XInternAtom(dpy, "WM_PROTOCOLS", False);
+		ev.xclient.format = 32;
+		ev.xclient.data.l[0] = a;
+		ev.xclient.data.l[1] = CurrentTime;
+		XSendEvent(dpy, c->wnd, False, NoEventMask, &ev);
+	} else {
+		killclient(c);
+	}
+}
+
+void killclient(Client *c) {
+	if (c == NULL) return;
+	XGrabServer(dpy);
+	XSetCloseDownMode(dpy, DestroyAll);
+	XKillClient(dpy, c->wnd);
+	XSync(dpy, False);
+	XUngrabServer(dpy);
 }
 
 void init() {
@@ -214,9 +251,15 @@ void updatebar(Bar *b) {
 	XGlyphInfo status_extents;
 	XftTextExtents8(dpy, b->font, (const FcChar8*)b->status, strlen(b->status), &status_extents);
 
-	XftDrawRect(b->draw,    &b->primary_color,     b->width - status_extents.width - 2*b->border - 2*b->padding, 0, status_extents.width + 2*b->padding + 2*b->border, b->height);
-	XftDrawRect(b->draw,    &b->bg_color,          b->width - status_extents.width - b->border - 2*b->padding, b->border, status_extents.width + 2*b->padding, b->height - 2*b->border);
-	XftDrawString8(b->draw, &b->fg_color, b->font, b->width - status_extents.width - b->border - b->padding, b->height - 8, (const FcChar8*)b->status, strlen(b->status));
+	if (fmon == bm) {
+		XftDrawRect(b->draw,    &b->primary_color,     b->width - status_extents.width - 2*b->border - 2*b->padding, 0, status_extents.width + 2*b->padding + 2*b->border, b->height);
+		XftDrawRect(b->draw,    &b->fg_color,          b->width - status_extents.width - b->border - 2*b->padding, b->border, status_extents.width + 2*b->padding, b->height - 2*b->border);
+		XftDrawString8(b->draw, &b->bg_color, b->font, b->width - status_extents.width - b->border - b->padding, b->height - 8, (const FcChar8*)b->status, strlen(b->status));
+	} else {
+		XftDrawRect(b->draw,    &b->primary_color,     b->width - status_extents.width - 2*b->border - 2*b->padding, 0, status_extents.width + 2*b->padding + 2*b->border, b->height);
+		XftDrawRect(b->draw,    &b->bg_color,          b->width - status_extents.width - b->border - 2*b->padding, b->border, status_extents.width + 2*b->padding, b->height - 2*b->border);
+		XftDrawString8(b->draw, &b->fg_color, b->font, b->width - status_extents.width - b->border - b->padding, b->height - 8, (const FcChar8*)b->status, strlen(b->status));
+	}
 
 	// width = b->posx makes no sense, because it's already in relation to the bar
 	int width = 0;
@@ -372,9 +415,8 @@ void keypress(XEvent * e) {
 
 	if (ev->keycode == XKeysymToKeycode(dpy, XK_q) && ev->state == Mod4Mask) {
 		if (fmon != NULL) {
-			if (fmon->focused != NULL) {
-				XDestroyWindow(dpy, fmon->focused->wnd);
-			}
+				//XDestroyWindow(dpy, fmon->focused->wnd);
+			termclient(fmon->focused);
 		}
 	}
 
@@ -578,6 +620,7 @@ void focusmon(Monitor *m) {
 
 	Client *old_focused = fmon->focused;
 
+	Monitor *prev_monitor = fmon;
 	fmon = m;
 
 	if (m->focused != NULL) {
@@ -587,6 +630,8 @@ void focusmon(Monitor *m) {
 	} else {
 		unfocus(old_focused);
 	}
+	updatebar(prev_monitor->statusbar);
+	updatebar(fmon->statusbar);
 }
 
 Client *wintoclient(Window wnd) {
