@@ -229,12 +229,6 @@ void updatebar(Bar *b) {
 
 	updatestatus(b);
 
-	if (bm->focused != NULL) {
-		strcpy(b->status, "focused ok!");
-	} else {
-		strcpy(b->status, "focused NULL!");
-	}
-
 	// draw status
 	XGlyphInfo status_extents;
 	XftTextExtents8(dpy, b->font, (const FcChar8*)b->status, strlen(b->status), &status_extents);
