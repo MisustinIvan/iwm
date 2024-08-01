@@ -148,6 +148,7 @@ void killclient(Client *c) {
 }
 
 void init() {
+	system("xrandr --output HDMI-1 --above eDP-1");
 	system("nitrogen --restore");
 	system("xsetroot -cursor_name left_ptr");
 	system("setxkbmap -layout us,cz -option grp:alt_shift_toggle");
@@ -227,6 +228,12 @@ void updatebar(Bar *b) {
 	XftDrawRect(b->draw, &b->bg_color, 0, 0, b->width, b->height);
 
 	updatestatus(b);
+
+	if (bm->focused != NULL) {
+		strcpy(b->status, "focused ok!");
+	} else {
+		strcpy(b->status, "focused NULL!");
+	}
 
 	// draw status
 	XGlyphInfo status_extents;
@@ -325,11 +332,10 @@ void updatemon(Monitor *m) {
 	// }
 
 	if (m->focused != NULL) {
-		XWindowChanges changes;
-		changes.stack_mode = Above;
-		XConfigureWindow(dpy, m->focused->wnd, CWStackMode, &changes);
+		XRaiseWindow(dpy, m->focused->wnd);
+	} else {
+		m->focused = m->clients;
 	}
-
 
 	if (fmon == m) {
 		focus(m->focused);
@@ -496,7 +502,6 @@ void keypress(XEvent * e) {
 				Client *next = fmon->focused->next;
 
 				Client *c = ripclient(fmon->focused, &fmon->clients);
-				pushclient(c, &fmon->next->clients);
 
 				if (prev != NULL) {
 					focus(prev);
@@ -511,6 +516,8 @@ void keypress(XEvent * e) {
 						fmon->next->focused = c;
 					}
 				}
+
+				pushclient(c, &fmon->next->clients);
 
 				updatemon(fmon);
 				updatebar(fmon->statusbar);
@@ -527,7 +534,6 @@ void keypress(XEvent * e) {
 				Client *next = fmon->focused->next;
 
 				Client *c = ripclient(fmon->focused, &fmon->clients);
-				pushclient(c, &fmon->prev->clients);
 
 				if (prev != NULL) {
 					focus(prev);
@@ -542,6 +548,8 @@ void keypress(XEvent * e) {
 						fmon->prev->focused = c;
 					}
 				}
+
+				pushclient(c, &fmon->prev->clients);
 
 				updatemon(fmon);
 				updatebar(fmon->statusbar);
@@ -637,7 +645,10 @@ void unfocus(Client *c) {
 
 	Monitor *m = wintomon(c->wnd);
 	if (m == NULL) {
-		return;
+		m = fmon;
+		if (m == NULL) {
+			return;
+		}
 	}
 
 	m->focused = NULL;
