@@ -1,5 +1,5 @@
 # IWM - Ivan's Window Manager
-IWM is a simple window manager for X11 with Xinerama support written in C with [Xlib](https://www.x.org/releases/current/doc/libX11/libX11/libX11.html). It has roughly 1000 lines of code(with coments and empty lines). It is inspired by dwm. It is designed to be a bare-bones start for people to build upon as they need. It operates on a single linked list of fullscreen windows, which the user can move around and swap. It has a simple statusbar at the top of the screen that displays the list of windows with the focused one being highlighted.
+IWM is a simple window manager for X11 with Xinerama support written in C with [Xlib](https://www.x.org/releases/current/doc/libX11/libX11/libX11.html). It has roughly 1000 lines of code(with coments and empty lines). It is inspired by [dwm](http://dwm.suckless.org/). It is designed to be a bare-bones start for people to build upon as they need. It operates on a single linked list of fullscreen windows, which the user can move around and swap. It has a simple statusbar at the top of the screen that displays the list of windows with the focused one being highlighted.
 
 # Installation
 To install IWM, clone the repository and run `make build` in the root directory. This will create the `iwm` executable. To install the executable, run `sudo make install`.
@@ -18,6 +18,9 @@ Some other options have to be configured in other places, which I have not yet r
 
 ## "Startup script"
 Other window managers can have some kind of script that runs on startup. IWM has a simple function called `init`, which has some defaults, which i recommend to change.
+
+## "Custom statusbar text"
+IWM uses the same mechanism as dwm to provide a way for the user to set custom statusbar text without modifying the source code. It is done by changing the name of the root window using a tool like `xsetroot`. Exaple use: `xsetroot -name $(date)`.
 
 ## Keybindings
 Keybindings are configured in the `grabkeys` and `keypress` functions in `main.c`. The default keybindings are:
