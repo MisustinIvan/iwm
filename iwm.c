@@ -220,59 +220,75 @@ void updatebar(Bar *b) {
 	if (b == NULL) {
 		return;
 	}
-#ifdef DEBUG
-	printf("Updating bar: %lu\n", b->wnd);
-#endif
 	Monitor *bm = bartomon(b);
-	if (bm == NULL) {
-		return;
-	}
+	if (bm == NULL) return;
 
 	XClearWindow(dpy, b->wnd);
 	XftDrawRect(b->draw, &b->bg_color, 0, 0, b->width, b->height);
 
 	updatestatus(b);
 
-	if (bm->clients == NULL) {
-		const char *msg = "No clients";
-
-		XftDrawStringUtf8(b->draw, &b->fg_color, b->font, b->padding, b->height - 8, (const FcChar8*)msg, strlen(msg));
-	}
-
 	// draw status
 	XGlyphInfo status_extents;
 	XftTextExtents8(dpy, b->font, (const FcChar8*)b->status, strlen(b->status), &status_extents);
 
-	if (fmon == bm) {
-		XftDrawRect(b->draw,    &b->primary_color,     b->width - status_extents.width - 2*b->border - 2*b->padding, 0, status_extents.width + 2*b->padding + 2*b->border, b->height);
-		XftDrawRect(b->draw,    &b->fg_color,          b->width - status_extents.width - b->border - 2*b->padding, b->border, status_extents.width + 2*b->padding, b->height - 2*b->border);
-		XftDrawString8(b->draw, &b->bg_color, b->font, b->width - status_extents.width - b->border - b->padding, b->height - 8, (const FcChar8*)b->status, strlen(b->status));
-	} else {
-		XftDrawRect(b->draw,    &b->primary_color,     b->width - status_extents.width - 2*b->border - 2*b->padding, 0, status_extents.width + 2*b->padding + 2*b->border, b->height);
-		XftDrawRect(b->draw,    &b->bg_color,          b->width - status_extents.width - b->border - 2*b->padding, b->border, status_extents.width + 2*b->padding, b->height - 2*b->border);
-		XftDrawString8(b->draw, &b->fg_color, b->font, b->width - status_extents.width - b->border - b->padding, b->height - 8, (const FcChar8*)b->status, strlen(b->status));
+	XftDrawRect(b->draw, &b->primary_color, b->width - status_extents.width - 2*b->border - 2*b->padding, 0, status_extents.width + 2*b->border + 2*b->padding, b->height);
+	XftDrawRect(b->draw, &b->bg_color,      b->width - status_extents.width - b->border - 2*b->padding, b->border, status_extents.width + 2*b->padding, b->height - 2*b->border);
+	XftDrawString8(b->draw, &b->fg_color, b->font, b->width - status_extents.width - b->border - b->padding, b->height - b->border - 8, (const FcChar8*)b->status, strlen(b->status));
+	
+	if (bm->clients == NULL) {
+		const char *msg = "No clients";
+		XftDrawStringUtf8(b->draw, &b->fg_color, b->font, b->border + b->padding, b->height - b->border - 8, (const FcChar8*)msg, strlen(msg));
+		XSync(dpy, False);
+		return;
 	}
 
-	// width = b->posx makes no sense, because it's already in relation to the bar
+	// fill with primary so that integer division doesn't fuck this up
+	XftDrawRect(b->draw, &b->primary_color, 0, 0, b->width - status_extents.width - 2*b->border - 2*b->padding, b->height);
+
+	// calculate nclients
+	int nclients = 0;
+	{
+		Client *cc = bm->clients;
+		while (cc != NULL) {
+			cc = cc->next;
+			nclients += 1;
+		}
+	}
+
+	// calculate character width
+	int char_width = 0;
+	{
+		XGlyphInfo char_extents;
+		XftTextExtents8(dpy, b->font, (const FcChar8*)"a", 2, &char_extents);
+		char_width = char_extents.width/2;
+	}
+
+	int rwidht = b->width - status_extents.width - 2*b->border - 2*b->padding;
+	int cwidth = rwidht/nclients;
 	int width = 0;
 	for (Client *c = bm->clients; c != NULL; c = c->next) {
-		// updatetitle(c);
-	
-#ifdef DEBUG
-		printf("Drawing %lu\n", c->wnd);
-#endif
 		XGlyphInfo extents;
 		XftTextExtents8(dpy, b->font, (const FcChar8*)c->name, strlen(c->name), &extents);
 
-		if (c == bm->focused) {
-			XftDrawRect(b->draw, &b->primary_color, width, 0, extents.width + 2*b->padding, b->height);
-			XftDrawString8(b->draw, &b->bg_color, b->font, width+b->padding, b->height - 8, (const FcChar8*)c->name, strlen(c->name));
-		} else {
-			XftDrawRect(b->draw, &b->primary_color, width, 0, extents.width + 2*b->padding, b->height);
-			XftDrawRect(b->draw, &b->bg_color, width+b->border, b->border, extents.width + 2*b->padding - 2*b->border, b->height - 2*b->border);
-			XftDrawString8(b->draw, &b->fg_color, b->font, width+b->padding, b->height - 8, (const FcChar8*)c->name, strlen(c->name));
+		// to keep the padding good
+		int amount = (cwidth/char_width) - 2;
+		if (amount >= strlen(c->name)) {
+			amount = strlen(c->name);
 		}
-		width += extents.width + b->padding*2;
+
+		if (c == bm->focused && fmon == bm) {
+			XftDrawRect(b->draw, &b->primary_color, width, 0, cwidth, b->height);
+
+			XftDrawString8(b->draw, &b->bg_color, b->font, width + b->border + b->padding, b->height - b->border - 8, (const FcChar8*)c->name, amount);
+		} else {
+			XftDrawRect(b->draw, &b->primary_color, width, 0, cwidth, b->height);
+			XftDrawRect(b->draw, &b->bg_color, width + b->border, b->border, cwidth - 2*b->border, b->height - 2*b->border);
+
+			XftDrawString8(b->draw, &b->fg_color, b->font, width + b->border + b->padding, b->height - b->border - 8, (const FcChar8*)c->name, amount);
+		}
+
+		width += cwidth;
 	}
 
 	XSync(dpy, False);
@@ -328,8 +344,6 @@ void togglebar(Bar *b) {
 }
 
 void setbar(Bar *b, Bool arg) {
-	// is this necessary?
-	// updatebar(b);
 	Monitor *m = bartomon(b);
 	if (m != NULL) {
 		m->bar = arg;
