@@ -502,7 +502,6 @@ void keypress(XEvent * e) {
 				Client *next = fmon->focused->next;
 
 				Client *c = ripclient(fmon->focused, &fmon->clients);
-				pushclient(c, &fmon->next->clients);
 
 				if (prev != NULL) {
 					focus(prev);
@@ -517,6 +516,8 @@ void keypress(XEvent * e) {
 						fmon->next->focused = c;
 					}
 				}
+
+				pushclient(c, &fmon->next->clients);
 
 				updatemon(fmon);
 				updatebar(fmon->statusbar);
@@ -533,7 +534,6 @@ void keypress(XEvent * e) {
 				Client *next = fmon->focused->next;
 
 				Client *c = ripclient(fmon->focused, &fmon->clients);
-				pushclient(c, &fmon->prev->clients);
 
 				if (prev != NULL) {
 					focus(prev);
@@ -548,6 +548,8 @@ void keypress(XEvent * e) {
 						fmon->prev->focused = c;
 					}
 				}
+
+				pushclient(c, &fmon->prev->clients);
 
 				updatemon(fmon);
 				updatebar(fmon->statusbar);
@@ -643,7 +645,10 @@ void unfocus(Client *c) {
 
 	Monitor *m = wintomon(c->wnd);
 	if (m == NULL) {
-		return;
+		m = fmon;
+		if (m == NULL) {
+			return;
+		}
 	}
 
 	m->focused = NULL;
