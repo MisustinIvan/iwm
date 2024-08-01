@@ -1,5 +1,5 @@
 # IWM - Ivan's Window Manager
-IWM is a simple window manager for X11 written in C with [Xlib](https://www.x.org/releases/current/doc/libX11/libX11/libX11.html). It has roughly 550 lines of code(with coments and empty lines). It is inspired by dwm. It is designed to be a bare-bones start for people to build upon as they need. It operates on a single linked list of fullscreen windows, which the user can move around and swap. It has a simple statusbar at the top of the screen that displays the list of windows with the focused one being highlighted.
+IWM is a simple window manager for X11 with Xinerama support written in C with [Xlib](https://www.x.org/releases/current/doc/libX11/libX11/libX11.html). It has roughly 1000 lines of code(with coments and empty lines). It is inspired by dwm. It is designed to be a bare-bones start for people to build upon as they need. It operates on a single linked list of fullscreen windows, which the user can move around and swap. It has a simple statusbar at the top of the screen that displays the list of windows with the focused one being highlighted.
 
 # Installation
 To install IWM, clone the repository and run `make build` in the root directory. This will create the `iwm` executable. To install the executable, run `sudo make install`.
@@ -30,6 +30,10 @@ Keybindings are configured in the `grabkeys` and `keypress` functions in `main.c
 - `MOD4 + Shift + l`: Swap with right window.
 - `MOD4 + Control + r`: Restart the wm.
 - `MOD4 + Control + Shift + q`: Quit the wm.
+- `MOD4 + period`: focus next monitor.
+- `MOD4 + comma`: focus previous monitor.
+- `MOD4 + Shift + period`: move focused client to next monitor.
+- `MOD4 + Shift + comma`: move focused client to previous monitor.
 
 # Screenshots
 ![Screenshot 1](./screenshots/screenshot1.png)

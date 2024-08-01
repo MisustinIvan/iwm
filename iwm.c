@@ -339,7 +339,7 @@ void updatemon(Monitor *m) {
 void togglebar(Bar *b) {
 	Monitor *m = bartomon(b);
 	if (m != NULL) {
-		setbar(b, m->bar);
+		setbar(b, !m->bar);
 	}
 }
 
