@@ -148,6 +148,7 @@ void killclient(Client *c) {
 }
 
 void init() {
+	system("xrandr --output HDMI-1 --above eDP-1");
 	system("nitrogen --restore");
 	system("xsetroot -cursor_name left_ptr");
 	system("setxkbmap -layout us,cz -option grp:alt_shift_toggle");
@@ -227,6 +228,12 @@ void updatebar(Bar *b) {
 	XftDrawRect(b->draw, &b->bg_color, 0, 0, b->width, b->height);
 
 	updatestatus(b);
+
+	if (bm->focused != NULL) {
+		strcpy(b->status, "focused ok!");
+	} else {
+		strcpy(b->status, "focused NULL!");
+	}
 
 	// draw status
 	XGlyphInfo status_extents;
@@ -325,11 +332,10 @@ void updatemon(Monitor *m) {
 	// }
 
 	if (m->focused != NULL) {
-		XWindowChanges changes;
-		changes.stack_mode = Above;
-		XConfigureWindow(dpy, m->focused->wnd, CWStackMode, &changes);
+		XRaiseWindow(dpy, m->focused->wnd);
+	} else {
+		m->focused = m->clients;
 	}
-
 
 	if (fmon == m) {
 		focus(m->focused);
