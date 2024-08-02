@@ -472,6 +472,15 @@ void keypress(XEvent * e) {
 		}
 	}
 
+	if (ev->keycode == XKeysymToKeycode(dpy, XK_o) && ev->state == Mod4Mask) {
+		if (fmon != NULL) {
+			if (fmon->next != NULL) {
+				focusmon(fmon->next);
+			} else if (fmon->prev != NULL) {
+				focusmon(fmon->prev);
+			}
+		}
+	}
 
 	if (ev->keycode == XKeysymToKeycode(dpy, XK_period) && ev->state == Mod4Mask) {
 		if (fmon != NULL) {
@@ -789,6 +798,7 @@ void grabkeys() {
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_comma), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_period), Mod4Mask|ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_comma), Mod4Mask|ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_o), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
 
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_k), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
 	XGrabKey(dpy, XKeysymToKeycode(dpy, XK_l), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
